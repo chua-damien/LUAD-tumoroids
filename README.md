@@ -7,7 +7,13 @@ Scripts in this repository is associated with the manuscript:
 
 # Scripts
 
-Jupyter notebooks associated with the data are located at `./notebooks/`
+R scripts are located at `./Scripts` consisting of:
+
+1. LUAD_public.R: Public LUAD bulk and single cell transcriptomics analysis
+
+2. LUAD_pt_bulk.R: Bulk sequencing analysis for LUAD patient biopsy
+
+3. LUAD_pt_smi.R: Nanostring CosMx SMI spatial transcriptomics anlaysis for LUAD patient biopsy
 
 # Data
 
