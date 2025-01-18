@@ -1,0 +1,376 @@
+---
+title: "LUAD_public.R"
+author: "Chua Damien"
+output: github_document
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+## Loading packages 
+```{r}
+library(GEOquery)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(Seurat.utils)
+library(VennDiagram)
+```
+
+## Loading datasets
+```{r}
+#GSE253013 scRNAseq
+GSE253013_lung <- readRDS("./Data/GSE253013_lung.rds")
+GSE253013_lung$Project <- "GSE253013"
+
+#TCGA
+query <- GDCquery(
+  project = c("TCGA-LUAD", "TCGA-LUSC"), 
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification",
+  experimental.strategy = "RNA-Seq",
+  workflow.type = "STAR - Counts"
+  )
+
+
+GDCdownload(query, files.per.chunk=100)
+
+all.exp <- GDCprepare(
+  query = query,
+  save = TRUE,
+  save.filename = "all.exp.rda")
+
+#in-house bulkRNAseq
+data<- readRDS("./Bulk_counts.rds")
+dds_data.2<- readRDS("./dds_data_Cancer_Normal.rds")
+dds_data.1<- readRDS("./dds_data_all.rds")
+vds_data.1<- readRDS("./vds_data_all.rds")
+
+data <- read.csv("./Data/RC.gene.csv")
+rownames(data) <- data$geneID
+data <- data[,2:ncol(data)]
+data <- data[which(!grepl("_PAR_Y",rownames(data))),]
+rownames(data) <- gsub("\\..*","",rownames(data))
+
+data_cond <- data.frame(ID = colnames(data),
+                        groups = factor(c("Fibroblast", "LCO",
+                                          rep("Normal",3), rep("Cancer", 3)),  
+                                        levels = c("Normal", "Cancer", "Fibroblast", "LCO")) )
+rownames(data_cond) <- data_cond$ID
+dds_data.1 <- DESeqDataSetFromMatrix(countData = as.matrix(data), 
+                                     colData = as.data.frame(data_cond),
+                                     design = model.matrix(~ groups, data_cond))
+dds_data.1 <- DESeq(dds_data.1)
+```
+
+
+## Obtaining LUAD specific gene signature
+```{r}
+# Gene expression patterns across TCGA-luad cohort
+
+# For LUAD 
+luad.primary.tumour <- luad.exp$barcode[luad.exp$shortLetterCode == "TP"]
+luad.solid.tissue.normal <- luad.exp$barcode[luad.exp$shortLetterCode == "NT"]
+
+dataPrep_luad <- TCGAanalyze_Preprocessing(
+  object = luad.exp, 
+  cor.cut = 0.6
+)                      
+
+dataNorm_luad <- TCGAanalyze_Normalization(
+  tabDF = dataPrep_luad,
+  geneInfo = geneInfoHT,
+  method = "gcContent"
+)                
+
+dataFilt_luad <- TCGAanalyze_Filtering(
+  tabDF = dataNorm_luad,
+  method = "quantile", 
+  qnt.cut =  0.25
+)   
+
+dataDEGs_luad <- TCGAanalyze_DEA(
+  mat1 = dataFilt_luad[,luad.solid.tissue.normal],
+  mat2 = dataFilt_luad[,luad.primary.tumour],
+  Cond1type = "Normal",
+  Cond2type = "Tumor",
+  fdr.cut = 0.01 ,
+  logFC.cut = 2,
+  method = "glmLRT",
+  pipeline = "edgeR"
+)  
+
+
+# For LUSC
+lusc.primary.tumour <- lusc.exp$barcode[lusc.exp$shortLetterCode == "TP"]
+lusc.solid.tissue.normal <- lusc.exp$barcode[lusc.exp$shortLetterCode == "NT"]
+
+dataPrep_lusc <- TCGAanalyze_Preprocessing(
+  object = lusc.exp, 
+  cor.cut = 0.6
+)                      
+
+dataNorm_lusc <- TCGAanalyze_Normalization(
+  tabDF = dataPrep_lusc,
+  geneInfo = geneInfoHT,
+  method = "gcContent"
+)                
+
+dataFilt_lusc <- TCGAanalyze_Filtering(
+  tabDF = dataNorm_lusc,
+  method = "quantile", 
+  qnt.cut =  0.25
+)   
+
+dataDEGs_lusc <- TCGAanalyze_DEA(
+  mat1 = dataFilt_lusc[,lusc.solid.tissue.normal],
+  mat2 = dataFilt_lusc[,lusc.primary.tumour],
+  Cond1type = "Normal",
+  Cond2type = "Tumor",
+  fdr.cut = 0.01 ,
+  logFC.cut = 2,
+  method = "glmLRT",
+  pipeline = "edgeR"
+)  
+
+## LUAD-LUSC set
+
+venn.diagram(
+  x = list(dataDEGs_luad$gene_name, dataDEGs_lusc$gene_name),
+  category.names = c("LUAD" , "LUSC"),
+  filename = 'DEG_LUAD_LUSC.png',
+  output=TRUE
+)
+
+## Obtain LUAD-specific genes
+luad_unique_DEG<- setdiff(dataDEGs_luad$gene_name, dataDEGs_lusc$gene_name)
+
+
+```
+
+## Inter-patient heterogeneity in LUAD patients
+```{r}
+
+#TCGA Cohort
+dataFilt_luad <- as.data.frame(dataFilt_luad)
+dataFilt_luad$gene_ens <- rownames(dataFilt_luad)
+dataFilt_luad_only <- dataFilt_luad[which(dataFilt_luad1$gene_ens %in% luad_unique_DEG_ens),]
+rownames(dataFilt_luad_only) <- dataFilt_luad_only$gene_ens
+dataFilt_luad_only <- select(dataFilt_luad_only, -c("gene_ens"))
+
+#in-house data
+inhouse_deg_mat <- data[which(rownames(assay(vds_data.1)) %in% luad_unique_DEG_ens),
+                        c("Normal_1", "Normal_2", "Normal_3",
+                          "Cancer_1", "Cancer_2", "Cancer_3")]
+dataFilt_luad_only <- dataFilt_luad_only
+dataFilt_luad_only$gene <- rownames(dataFilt_luad_only)
+inhouse_deg_mat$gene <- rownames(inhouse_deg_mat)
+
+#Integration
+TCGA_inhouse_merged_mat <- merge(dataFilt_luad_only, inhouse_deg_mat)
+rownames(TCGA_inhouse_merged_mat) <- TCGA_inhouse_merged_mat$gene
+TCGA_inhouse_merged_mat <- dplyr::select(TCGA_inhouse_merged_mat, -"gene")
+
+#plot hm
+meta_data <- colData(luad.exp)[, c("barcode", "tissue_type")]
+meta_data$source <- "TCGA"
+
+df_col1 <- data.frame(
+  barcode= c("Normal_1", "Normal_2", "Normal_3",
+             "Cancer_1", "Cancer_2", "Cancer_3"),
+  tissue_type = c( rep("Normal", 3), rep("Tumor", 3)),
+  source = "in-house"
+)
+
+meta_data <- rbind(meta_data, df_col1)
+
+TCGAvisualize_Heatmap(
+  data = as.matrix(TCGA_inhouse_merged_mat),
+  col.metadata =  meta_data,
+  sortCol = c("tissue_type","source"),
+  type = "expression", # sets default color
+  scale = "row", # use z-scores for better visualization. Center gene expression level around 0.
+  title = "Heatmap from concensus cluster", 
+  filename = "merged_TCGA_inhouse.png",
+  extremes = seq(-2,2,1),
+  color.levels = colorRampPalette(c("blue3", "white", "red3"))(n = 5),
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  col.colors = list(source = c("TCGA" = "blue",
+                               "in-house" = "yellow"),
+                    tissue_type = c("Normal" = "black",
+                                    "Tumor" = "red")),
+  width = 1000,
+  height = 500
+)
+
+
+
+
+
+```
+
+## Functional annotation 
+```{r}
+
+library(clusterProfiler)
+library(AnnotationHub)
+library(dplyr)
+library(annotables)
+library(org.Mm.eg.db)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(DESeq2)
+library(pheatmap)
+set.seed(8888)
+
+##### Up-regulated #####
+luad_up <- rownames(dataDEGs_luad)[dataDEGs_luad$PValue < 0.05 & !is.na(dataDEGs_luad$PValue) & dataDEGs_luad$logFC >=1]
+luad_up_unique <- luad_up[which(luad_up %in% luad_unique_DEG_ens)]
+
+#GOall
+luad_up_GOall <-enrichGO(luad_up_unique,
+                     OrgDb         = org.Hs.eg.db,  
+                     ont           = "all",
+                     pAdjustMethod = "BH",
+                     keyType       = 'ENSEMBL',
+                     pvalueCutoff  = 1,
+                     qvalueCutoff  = 1,
+                     readable      = TRUE)
+
+write.csv(luad_up_GOall@result, paste0("luad_up_GO.csv"))
+
+dotplot(luad_up_GOall, 
+        x = "GeneRatio", showCategory = list("immunoglobulin complex",
+                                             "immunoglobulin production",
+                                             "protein localization to CENP-A containing chromatin",
+                                             "ligand-gated channel activity",
+                                             "cell fate specification",
+                                             "hormone metabolic process",
+                                             "collagen-containing extracellular matrix",
+                                             "metalloendopeptidase activity",
+                                             "collagen catabolic process",
+                                             "fat-soluble vitamin metabolic process",
+                                             "DNA replication checkpoint signaling",
+                                             "response to cAMP",
+                                             "transforming growth factor beta1 production"),
+        color = "qvalue",
+        title = "luad_up_GO_all")
+
+
+##### Down-regulated #####
+luad_down <- rownames(dataDEGs_luad)[dataDEGs_luad$PValue < 0.05 & !is.na(dataDEGs_luad$PValue) & dataDEGs_luad$logFC <=1]
+luad_down_unique <- luad_down[which(luad_down %in% luad_unique_DEG_ens)]
+
+luad_down_GOall <-enrichGO(luad_down_unique,
+                         OrgDb         = org.Hs.eg.db,  
+                         ont           = "all",
+                         pAdjustMethod = "BH",
+                         keyType       = 'ENSEMBL',
+                         pvalueCutoff  = 1,
+                         qvalueCutoff  = 1,
+                         readable      = TRUE)
+
+write.csv(luad_down_GOall@result, paste0("luad_down_GOall.csv"))
+
+
+dotplot(luad_down_GOall, 
+        x = "GeneRatio", showCategory = list("glycosaminoglycan binding", 
+                                             "canonical Wnt signaling pathway",
+                                             "regulation of epithelial cell proliferation",
+                                             "regulation of sprouting angiogenesis",
+                                             "basolateral plasma membrane",
+                                             "hydrogen peroxide metabolic process",
+                                             "regulation of ERK1 and ERK2 cascade",
+                                             "icosanoid transmembrane transporter activity"),
+        color = "qvalue",
+        title = "luad_down_GO_all")
+
+```
+
+
+## Public scRNAseq- GSE253013
+```{r}
+
+## Plot Relative abundances
+Idents(GSE253013_lung) <- GSE253013_lung$cell_type
+GSE253013_lung<- subset(x = GSE253013_lung, idents = c("Airway Epithelium"), invert = TRUE)
+Idents(GSE253013_lung) <- GSE253013_lung$tissue_type
+GSE253013_lung_n <- subset(GSE253013_lung, idents= c("NAT"))@meta.data
+GSE253013_lung_t <- subset(GSE253013_lung, idents= c("T"))@meta.data
+
+table(GSE253013_lung_n$cell_type)
+table(GSE253013_lung_t$cell_type)
+
+df_GSE253013 <- data.frame(type = "nLung",
+                           value = table(GSE253013_lung_n$cell_type),
+                           total.cells = sum(table(GSE253013_lung_n$cell_type)))
+df_GSE253013 <- rbind(df_GSE253013,
+                      data.frame(type = "tLung",
+                                 value = table(GSE253013_lung_t$cell_type),
+                                 total.cells = sum(table(GSE253013_lung_t$cell_type))) )
+df_GSE253013 <- df_GSE253013[which(!(df_GSE253013$value.Var1 %in% c("Unknown", "Airway Epithelium"))),]
+
+df_GSE253013$Rel.abd <- df_GSE253013$value.Freq/df_GSE253013$total.cells 
+colnames(df_GSE253013) <- c("TissueType", "CellType", "Counts", "Total.counts", "Rel.abd")
+df_GSE253013$CellType <- factor(df_GSE253013$CellType, levels = c("Epithelial", "Endothelial", "Fibroblasts",
+                                                                  "Myeloid", "Granulocytes", "B cells", "T cells", "CD45+"))
+
+
+ggplot(df_GSE253013,aes(fill=CellType, y=Rel.abd, x=TissueType))+
+  geom_bar(position="stack", stat = 'identity', colour = "black")+
+  guides(fill=guide_legend(reverse=F))+
+  theme(text = element_text(size=15),axis.text.x = element_text(angle=45,hjust=1),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        axis.line=element_line(color="black"))+
+  xlab("Celltype")+
+  ylab("Relative proportion") +
+  ggtitle("GSE243013")
+
+## Ploting individual celltype changes
+#normal
+df2_GSE253013_wide_n <- reshape(as.data.frame(table(GSE253013_lung_n$cell_nype, GSE253013_lung_n$PatientID)),
+                                direction = "wide", idvar = "Var2", timevar = "Var1")
+df2_GSE253013_wide_n$total.cells <- rowSums(df2_GSE253013_wide_n[, -1])
+df2_GSE253013_wide_n_rel <- df2_GSE253013_wide_n[, -c(1, ncol(df2_GSE253013_wide_n))] / df2_GSE253013_wide_n$total.cells
+rownames(df2_GSE253013_wide_n_rel) <- df2_GSE253013_wide_n$Var2
+colnames(df2_GSE253013_wide_n_rel) <- sub("Freq.", "", colnames(df2_GSE253013_wide_n_rel))
+df2_GSE253013_long_n_rel <- reshape(df2_GSE253013_wide_n_rel, direction = "long", varying = list(colnames(df2_GSE253013_wide_n_rel)),
+                                     timevar = "CellType", idvar = "SampleID", times = colnames(df2_GSE253013_wide_n_rel),
+                                     ids = rownames(df2_GSE253013_wide_n_rel))
+df2_GSE253013_long_n_rel$TissueType <- "nLung"
+
+#tumor
+df2_GSE253013_wide_t <- reshape(as.data.frame(table(GSE253013_lung_t$cell_type, GSE253013_lung_t$PatientID)),
+                                direction = "wide", idvar = "Var2", timevar = "Var1")
+df2_GSE253013_wide_t$total.cells <- rowSums(df2_GSE253013_wide_t[, -1])
+df2_GSE253013_wide_t_rel <- df2_GSE253013_wide_t[, -c(1, ncol(df2_GSE253013_wide_t))] / df2_GSE253013_wide_t$total.cells
+rownames(df2_GSE253013_wide_t_rel) <- df2_GSE253013_wide_t$Var2
+colnames(df2_GSE253013_wide_t_rel) <- sub("Freq.", "", colnames(df2_GSE253013_wide_t_rel))
+df2_GSE253013_long_t_rel <- reshape(df2_GSE253013_wide_t_rel, direction = "long", varying = list(colnames(df2_GSE253013_wide_t_rel)),
+                                     timevar = "CellType", idvar = "SampleID", times = colnames(df2_GSE253013_wide_t_rel),
+                                     ids = rownames(df2_GSE253013_wide_t_rel))
+df2_GSE253013_long_t_rel$TissueType <- "tLung"
+
+
+#combine
+df2_GSE253013 <- rbind(df2_GSE253013_long_t_rel, df2_GSE253013_long_n_rel)
+colnames(df2_GSE253013)[2] <- "Rel.abd"
+
+df2_GSE253013$CellType <- factor(df2_GSE253013$CellType, levels = c("Epithelial","Endothelial", "Fibroblasts","Myeloid", "Granulocytes", "B cells", "T cells", "CD45+"))
+
+df2_GSE253013 <- df2_GSE253013[which(!is.na(df2_GSE253013$CellType)),]
+
+ggplot(df2_GSE253013, aes(TissueType, Rel.abd, fill = CellType)) +
+  stat_summary(geom = "bar", fun = mean, position = "dodge") +
+  stat_summary(geom = "errorbar", fun.data = mean_se, position = "dodge", width = 0.5) + 
+  facet_wrap(~CellType, scales = "free") +
+  ggtitle("GSE253013")
+
+
+```
+
+
+

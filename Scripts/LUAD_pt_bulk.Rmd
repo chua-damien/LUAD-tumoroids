@@ -1,0 +1,249 @@
+---
+title: "LUAD_pt_bulk.R"
+author: "Chua Damien"
+output: github_document
+---
+
+
+## Loading datasets
+```{r}
+
+data <- read.csv("./Data/RC.gene.csv")
+rownames(data) <- data$geneID
+data <- data[,2:ncol(data)]
+data <- data[which(!grepl("_PAR_Y",rownames(data))),]
+rownames(data) <- gsub("\\..*","",rownames(data))
+
+data_cond <- data.frame(ID = colnames(data),
+                        groups = factor(c("Fibroblast", "LCO",
+                                          rep("Normal",3), rep("Cancer", 3)),  
+                                        levels = c("Normal", "Cancer", "Fibroblast", "LCO")) )
+rownames(data_cond) <- data_cond$ID
+dds_data.1 <- DESeqDataSetFromMatrix(countData = as.matrix(data), 
+                                     colData = as.data.frame(data_cond),
+                                     design = model.matrix(~ groups, data_cond))
+dds_data.1 <- DESeq(dds_data.1)
+
+```
+
+## In-house data with LUAD-specific signature
+```{r}
+#[Continued from LUAD_public.R]
+inhouse_deg_mat_all <- data[which(rownames(assay(vds_data.1)) %in% luad_unique_DEG_ens), ]
+
+df_col3 <- data.frame(
+  barcode= c("Fibroblast","LCO",
+             "Normal_1", "Normal_2", "Normal_3",
+             "Cancer_1", "Cancer_2", "Cancer_3"),
+  tissue_type = c("Fibroblast", "LCO", rep("Normal", 3), rep("Tumor", 3))
+)
+
+#scale rows
+data_hm <- inhouse_deg_mat_all
+data_hm <- t(scale(t(data_hm)))
+all.na <- apply(data_hm,1, function(x) all(is.na(x)))
+data_hm <- data_hm[!all.na,]
+
+ha <- ComplexHeatmap::HeatmapAnnotation(df = df_col3,
+                                        col = list(tissue_type = c("Fibroblast" ="orange",
+                                                                   "LCO" = "pink",
+                                                                   "Normal" = "black",
+                                                                   "Tumor" = "red")))
+heatmap  <- ComplexHeatmap::Heatmap(
+  as.matrix(data_hm),
+  name = "expression z-score",
+  top_annotation = ha,
+  col = circlize::colorRamp2(seq(-2,2,1), colorRampPalette(c("blue3", "white", "red3"))(n = 5)),
+  row_names_gp =  grid::gpar(fontsize = 12),
+  show_row_names = FALSE,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_column_names = TRUE,
+  column_title = "Heatmap")
+
+
+```
+
+
+## GSEA for Tumour, LCO and Fibroblast
+```{r}
+
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(DOSE)
+library(enrichplot)
+
+
+##### Tumor Biopsy
+res_Cancer <- results(dds_data.1, name= "groupsCancer")
+t.res.Cancer <- tidy.DESeqResults(res_Cancer)
+t.res.Cancer <- arrange(t.res.Cancer, p.adjusted)
+t.res.Cancer$gene <- gsub("\\..*","", t.res.Cancer$gene)
+
+t.res.Cancer <- inner_join (t.res.Cancer, grch38, by = c("gene" = "ensgene"))
+
+View(t.res.Cancer)
+
+Cancer_genelist <- data.frame(gene = t.res.Cancer$gene,
+                              value = t.res.Cancer$estimate)
+Cancer_genelist <- na.omit(Cancer_genelist)
+Cancer_genelist <- Cancer_genelist[order(Cancer_genelist$value, decreasing = T),]
+Cancer_genelist <- Cancer_genelist[!duplicated(Cancer_genelist),]
+Cancer_genelist1 <- Cancer_genelist$value
+names(Cancer_genelist1) <- Cancer_genelist$gene
+
+
+Cancer_GSEdo <- gseGO(Cancer_genelist1,
+                           ont = "ALL",
+                           OrgDb = org.Hs.eg.db,
+                           keyType       = 'ENSEMBL',
+                           minGSSize = 3,
+                           maxGSSize = 500,
+                           pvalueCutoff = 1,
+                           pAdjustMethod = "fdr",
+                           seed = 8888)
+write.csv(data.frame(ID = Cancer_GSEdo@result$Description,
+                     NES = Cancer_GSEdo@result$NES,
+                     p.adj = Cancer_GSEdo@result$pvalue,
+                     q.val = Cancer_GSEdo@result$qvalue),
+          file = paste0("Cancer_GSEdo", ".csv") )
+
+
+p_cancer_cil <- gseaplot2(Cancer_GSEdo, geneSetID = c(6), pvalue_table= F,
+                        subplots= 1:3,
+                        title = paste0("Cancer : ", Cancer_GSEdo[6, "Description"])
+)
+
+p_cancer_chr <- gseaplot2(Cancer_GSEdo, geneSetID = c(36), pvalue_table= F,
+                        subplots= 1:3,
+                        title = paste0("Cancer : ", Cancer_GSEdo[36, "Description"])
+)
+
+p_cancer_oxy <- gseaplot2(Cancer_GSEdo, geneSetID = c(45), pvalue_table= T,
+          subplots= 1:2,
+          title = paste0("Cancer : ", Cancer_GSEdo[45, "Description"])
+)
+
+
+p_cancer_ecm <- gseaplot2(Cancer_GSEdo, geneSetID = c(111), pvalue_table= F,
+                          subplots= 1:3,
+                          title = paste0("Cancer : ", Cancer_GSEdo[111, "Description"])
+)
+
+
+p_cancer_col <-gseaplot2(Cancer_GSEdo, geneSetID = c(780), pvalue_table= T,
+          subplots= 1:2,
+          title = paste0("Cancer : ", Cancer_GSEdo[780, "Description"])
+)
+  
+
+
+
+
+
+
+##### LCO
+res_LCO <- results(dds_data.1, name= "groupsLCO")
+t.res.LCO <- tidy.DESeqResults(res_LCO)
+t.res.LCO <- arrange(t.res.LCO, p.adjusted)
+t.res.LCO$gene <- gsub("\\..*","", t.res.LCO$gene)
+
+t.res.LCO <- inner_join (t.res.LCO, grch38, by = c("gene" = "ensgene"))
+
+View(t.res.LCO)
+
+LCO_genelist <- data.frame(gene = t.res.LCO$gene,
+                           value = t.res.LCO$estimate)
+LCO_genelist <- na.omit(LCO_genelist)
+LCO_genelist <- LCO_genelist[order(LCO_genelist$value, decreasing = T),]
+LCO_genelist <- LCO_genelist[!duplicated(LCO_genelist),]
+LCO_genelist1 <- LCO_genelist$value
+names(LCO_genelist1) <- LCO_genelist$gene
+
+
+LCO_GSEdo <- gseGO(LCO_genelist1,
+                   ont = "ALL",
+                   OrgDb = org.Hs.eg.db,
+                   keyType       = 'ENSEMBL',
+                   minGSSize = 3,
+                   maxGSSize = 500,
+                   pvalueCutoff = 1,
+                   pAdjustMethod = "fdr",
+                   seed = 8888)
+
+write.csv(data.frame(ID = LCO_GSEdo@result$Description,
+                     NES = LCO_GSEdo@result$NES,
+                     p.adj = LCO_GSEdo@result$pvalue,
+                     q.val = LCO_GSEdo@result$qvalue),
+          file = paste0("LCO_GSEdo", ".csv") )
+
+
+p_lco_cil <- gseaplot2(LCO_GSEdo, geneSetID = c(703), pvalue_table= F,
+                       subplots= 1:3,
+                       title = paste0("LCT : ", LCO_GSEdo[703, "Description"])
+)
+
+p_lco_chr <- gseaplot2(LCO_GSEdo, geneSetID = c(414), pvalue_table= F,
+                       subplots= 1:3,
+                       title = paste0("LCT : ", LCO_GSEdo[414, "Description"])
+)
+
+p_lco_oxy <- gseaplot2(LCO_GSEdo, geneSetID = c(878), pvalue_table= F,
+                       subplots= 1:3,
+                       title = paste0("LCT : ", LCO_GSEdo[878, "Description"])
+)
+
+
+
+
+
+##### Fibroblast 
+res_fibro <- results(dds_data.1, name= "groupsFibroblast")
+t.res.fibro <- tidy.DESeqResults(res_fibro)
+t.res.fibro <- arrange(t.res.fibro, p.adjusted)
+t.res.fibro$gene <- gsub("\\..*","", t.res.fibro$gene)
+
+t.res.fibro <- inner_join (t.res.fibro, grch38, by = c("gene" = "ensgene"))
+
+fibro_genelist <- data.frame(gene = t.res.fibro$gene,
+                              value = t.res.fibro$estimate)
+fibro_genelist <- na.omit(fibro_genelist)
+fibro_genelist <- fibro_genelist[order(fibro_genelist$value, decreasing = T),]
+fibro_genelist <- fibro_genelist[!duplicated(fibro_genelist),]
+fibro_genelist1 <- fibro_genelist$value
+names(fibro_genelist1) <- fibro_genelist$gene
+
+
+fibro_GSEdo <- gseGO(fibro_genelist1,
+                      ont = "ALL",
+                      OrgDb = org.Hs.eg.db,
+                      keyType       = 'ENSEMBL',
+                      minGSSize = 3,
+                      maxGSSize = 500,
+                      pvalueCutoff = 1,
+                      pAdjustMethod = "fdr",
+                      seed = 8888)
+
+write.csv(data.frame(ID = fibro_GSEdo@result$Description,
+                     NES = fibro_GSEdo@result$NES,
+                     p.adj = fibro_GSEdo@result$pvalue,
+                     q.val = fibro_GSEdo@result$qvalue),
+          file = paste0("fibro_GSEdo", ".csv") )
+
+
+p_fibro_ecm <- gseaplot2(fibro_GSEdo, geneSetID = c(772), pvalue_table= F,
+                         subplots= 1:3,
+                         title = paste0("Fibro : ", fibro_GSEdo[772, "Description"])
+)
+
+p_fibro_col <- gseaplot2(fibro_GSEdo, geneSetID = c(1481), pvalue_table= F,
+                         subplots= 1:3,
+                         title = paste0("Fibro : ", fibro_GSEdo[1481, "Description"])
+)
+
+
+```
+
