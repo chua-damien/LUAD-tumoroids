@@ -1,7 +1,7 @@
 # LUAD-tumoroids
 
 Scripts in this repository is associated with the manuscript:
-> Qiao K., Huang Y., Chua D., Qu J., ..., Zhang G., et al., manuscript entitled "Differential Chemosensitivities of Patient-Derived Tumoroids and Fibroblasts Uncover LUAD Heterogeneity and Recurrence Mechanisms", under submission.
+> Qiao K., Huang Y., Chua D., Qu J., ..., Zhang G., manuscript entitled "Differential Chemosensitivities of Patient-Derived Tumoroids and Fibroblasts Uncover LUAD Heterogeneity and Recurrence Mechanisms", under submission.
 
 
 
