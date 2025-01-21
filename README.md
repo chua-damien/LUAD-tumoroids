@@ -17,4 +17,4 @@ R scripts are located at `./Scripts` consisting of:
 
 # Data
 
-Raw sequences for tumor biopsy bulk RNAseq and spatial transcriptomics and patient-derived tumoroid bulk RNAseq are found in GEO Accession number (pending). 
+Raw sequences for tumor biopsy bulk RNAseq and spatial transcriptomics and patient-derived tumoroid bulk RNAseq are found in GEO Accession number (GSE287471, GSE287472). 
